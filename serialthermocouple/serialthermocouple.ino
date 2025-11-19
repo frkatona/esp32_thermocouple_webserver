@@ -21,7 +21,7 @@ double temp_F = 0.0;
 
 // onboard LED (on many ESP32 dev boards this is GPIO 2;
 // LED_BUILTIN should be defined by the core)
-const int ledPin = LED_BUILTIN;
+const int ledPin = 2;
 
 void MainPage() {
   String _html_page = html_page;   // html_page defined in html.h
@@ -80,4 +80,3 @@ void loop(void){
 
   // No blocking delays here; sampling happens in Web_Thermo()
 }
-  
