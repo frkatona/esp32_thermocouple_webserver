@@ -1,8 +1,11 @@
 #ifndef HTML_H
 #define HTML_H
 
-// ESP32-hosted UI for the thermocouple, with a Begin/Stop
-// recording button and a simple line chart of °C vs time.
+// ESP32-hosted UI for the thermocouple, with:
+// - Begin/Stop recording
+// - Adjustable sampling interval (client-side polling)
+// - Download CSV of time_s vs temp_C
+// - Simple line chart of °C vs time
 
 const char html_page[] PROGMEM = R"=====(<!DOCTYPE html>
 <html>
@@ -31,7 +34,7 @@ const char html_page[] PROGMEM = R"=====(<!DOCTYPE html>
       border-radius: 16px;
       padding: 1.5rem;
       box-shadow: 0 20px 40px rgba(0,0,0,0.5);
-      max-width: 520px;
+      max-width: 540px;
       width: 100%;
       box-sizing: border-box;
       border: 1px solid #1f2937;
@@ -82,6 +85,45 @@ const char html_page[] PROGMEM = R"=====(<!DOCTYPE html>
       margin-left: 0.25rem;
     }
 
+    .control-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-bottom: 0.6rem;
+      align-items: center;
+    }
+
+    .control-row .field {
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+      font-size: 0.8rem;
+      color: #9ca3af;
+    }
+
+    .control-row .field label {
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      font-size: 0.7rem;
+    }
+
+    .control-row .field input {
+      background: #020617;
+      border-radius: 999px;
+      border: 1px solid #1d283a;
+      color: #e5e7eb;
+      padding: 0.35rem 0.6rem;
+      font-size: 0.85rem;
+      min-width: 90px;
+    }
+
+    .controls-right {
+      margin-left: auto;
+      display: flex;
+      gap: 0.4rem;
+      flex-wrap: wrap;
+    }
+
     .status-row {
       display: flex;
       align-items: center;
@@ -89,8 +131,8 @@ const char html_page[] PROGMEM = R"=====(<!DOCTYPE html>
       gap: 0.5rem;
       font-size: 0.8rem;
       color: #9ca3af;
-      margin-top: 0.5rem;
-      margin-bottom: 0.75rem;
+      margin-top: 0.25rem;
+      margin-bottom: 0.65rem;
     }
 
     .pill {
@@ -118,26 +160,26 @@ const char html_page[] PROGMEM = R"=====(<!DOCTYPE html>
     }
 
     button.record-btn {
-      width: 100%;
-      padding: 0.6rem 0.75rem;
+      padding: 0.6rem 0.9rem;
       border-radius: 999px;
       border: 1px solid #1d283a;
       background: #16a34a;
       color: #e5e7eb;
-      font-size: 0.9rem;
+      font-size: 0.85rem;
       cursor: pointer;
-      margin-bottom: 0.75rem;
       display: inline-flex;
       align-items: center;
       justify-content: center;
       gap: 0.4rem;
+      white-space: nowrap;
     }
 
     button.record-btn.stopped {
       background: #111827;
     }
 
-    button.record-btn:active {
+    button.record-btn:active,
+    button.csv-btn:active {
       transform: scale(0.98);
     }
 
@@ -145,8 +187,18 @@ const char html_page[] PROGMEM = R"=====(<!DOCTYPE html>
       width: 8px;
       height: 8px;
       border-radius: 999px;
-      background: #f97316;
-      box-shadow: 0 0 8px rgba(249,115,22,0.9);
+      background: #4b5563;
+    }
+
+    button.csv-btn {
+      padding: 0.55rem 0.8rem;
+      border-radius: 999px;
+      border: 1px solid #1d283a;
+      background: #0f172a;
+      color: #e5e7eb;
+      font-size: 0.8rem;
+      cursor: pointer;
+      white-space: nowrap;
     }
 
     canvas {
@@ -182,6 +234,9 @@ const char html_page[] PROGMEM = R"=====(<!DOCTYPE html>
       .value {
         font-size: 1.4rem;
       }
+      .controls-right {
+        margin-left: 0;
+      }
     }
   </style>
 </head>
@@ -202,10 +257,21 @@ const char html_page[] PROGMEM = R"=====(<!DOCTYPE html>
       </div>
     </div>
 
-    <button class="record-btn stopped" id="recordBtn" onclick="toggleRecording()">
-      <span class="dot-small" id="recordDot"></span>
-      <span id="recordLabel">Begin recording</span>
-    </button>
+    <div class="control-row">
+      <div class="field">
+        <label for="intervalInput">Sampling interval (s)</label>
+        <input id="intervalInput" type="number" min="0.1" step="0.1" value="1.0">
+      </div>
+
+      <div class="controls-right">
+        <button class="csv-btn" onclick="downloadCSV()">Download CSV</button>
+
+        <button class="record-btn stopped" id="recordBtn" onclick="toggleRecording()">
+          <span class="dot-small" id="recordDot"></span>
+          <span id="recordLabel">Begin recording</span>
+        </button>
+      </div>
+    </div>
 
     <div class="status-row">
       <div id="statusText">Idle</div>
@@ -232,6 +298,7 @@ const char html_page[] PROGMEM = R"=====(<!DOCTYPE html>
   const recordBtn = document.getElementById('recordBtn');
   const recordLabelEl = document.getElementById('recordLabel');
   const recordDotEl = document.getElementById('recordDot');
+  const intervalInput = document.getElementById('intervalInput');
 
   const canvas = document.getElementById('tempChart');
   const ctx = canvas.getContext('2d');
@@ -242,7 +309,9 @@ const char html_page[] PROGMEM = R"=====(<!DOCTYPE html>
 
   // {t: seconds since start, c: temperature in °C}
   let samples = [];
-  const maxSamples = 600; // e.g., 10 minutes at 1 Hz
+  const maxSamples = 600; // e.g., up to 10 min at 1 Hz
+
+  let sampleIntervalMs = 1000; // default 1 second
 
   function setOnlineState(online) {
     if (online) {
@@ -251,6 +320,25 @@ const char html_page[] PROGMEM = R"=====(<!DOCTYPE html>
       statusDotEl.classList.add('offline');
     }
   }
+
+  function updateIntervalFromInput() {
+    const v = parseFloat(intervalInput.value);
+    if (isNaN(v) || v <= 0) {
+      return;
+    }
+    sampleIntervalMs = v * 1000.0;
+
+    // If currently recording, restart the timer with the new interval
+    if (recording) {
+      if (pollTimer) {
+        clearInterval(pollTimer);
+      }
+      pollTimer = setInterval(fetchAndRecord, sampleIntervalMs);
+    }
+  }
+
+  intervalInput.addEventListener('change', updateIntervalFromInput);
+  intervalInput.addEventListener('blur', updateIntervalFromInput);
 
   function toggleRecording() {
     if (!recording) {
@@ -265,9 +353,9 @@ const char html_page[] PROGMEM = R"=====(<!DOCTYPE html>
       statusTextEl.textContent = 'Recording…';
       lastUpdateEl.textContent = '—';
 
-      // Start polling at 1 Hz
-      fetchAndRecord(); // immediate first sample
-      pollTimer = setInterval(fetchAndRecord, 1000);
+      updateIntervalFromInput();  // ensure we pick up the latest value
+      fetchAndRecord();           // immediate first sample
+      pollTimer = setInterval(fetchAndRecord, sampleIntervalMs);
     } else {
       // Stop recording
       recording = false;
@@ -324,6 +412,30 @@ const char html_page[] PROGMEM = R"=====(<!DOCTYPE html>
         setOnlineState(false);
         statusTextEl.textContent = 'Error: could not read from ESP32';
       });
+  }
+
+  function downloadCSV() {
+    if (!samples.length) {
+      alert('No data to download. Begin recording first.');
+      return;
+    }
+    let csv = 'time_s,temp_C\n';
+    for (const s of samples) {
+      csv += s.t.toFixed(3) + ',' + s.c.toFixed(3) + '\n';
+    }
+
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    a.href = url;
+    a.download = 'thermocouple_' + timestamp + '.csv';
+
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   }
 
   function resizeCanvasToDisplaySize() {
@@ -471,7 +583,7 @@ const char html_page[] PROGMEM = R"=====(<!DOCTYPE html>
     }
     ctx.stroke();
 
-    // Optional: small circle at last point
+    // Small circle at last point
     const last = samples[samples.length - 1];
     const lx = xPixel(last.t);
     const ly = yPixel(last.c);

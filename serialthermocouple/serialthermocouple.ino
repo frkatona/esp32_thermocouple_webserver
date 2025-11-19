@@ -3,7 +3,7 @@
 #include "max6675.h"
 #include "html.h"   // contains html_page
 
-// MAX6675 pins (SPI2 example from your comment)
+// MAX6675 pins (SPI2 example)
 int thermoDO  = 12;   // MISO
 int thermoCS  = 15;   // CS
 int thermoCLK = 14;   // SCLK
@@ -19,8 +19,9 @@ const char* password = "APK_Thermocouple";
 double temp_C = 0.0;
 double temp_F = 0.0;
 
-unsigned long lastReadMs = 0;
-const unsigned long readIntervalMs = 1000;  // 1 second
+// onboard LED (on many ESP32 dev boards this is GPIO 2;
+// LED_BUILTIN should be defined by the core)
+const int ledPin = LED_BUILTIN;
 
 void MainPage() {
   String _html_page = html_page;   // html_page defined in html.h
@@ -28,6 +29,17 @@ void MainPage() {
 }
 
 void Web_Thermo() {
+  // Take a sample *when this endpoint is called* (i.e. when the browser polls)
+  digitalWrite(ledPin, HIGH);                 // LED on while sampling
+  temp_C = thermocouple.readCelsius();
+  temp_F = thermocouple.readFahrenheit();
+  digitalWrite(ledPin, LOW);                  // LED off after sample
+
+  Serial.print("Sample -> °C = ");
+  Serial.print(temp_C);
+  Serial.print(" | °F = ");
+  Serial.println(temp_F);
+
   // JSON array: ["<C>","<F>"]
   String data = "[\"" + String(temp_C, 2) + "\",\"" + String(temp_F, 2) + "\"]";
   server.send(200, "application/json", data);
@@ -39,6 +51,9 @@ void setup(void){
 
   Serial.println();
   Serial.println("Starting ESP32 Thermocouple AP...");
+
+  pinMode(ledPin, OUTPUT);
+  digitalWrite(ledPin, LOW);
 
   // Start as Access Point
   WiFi.mode(WIFI_AP);
@@ -63,17 +78,6 @@ void loop(void){
   // Always handle HTTP clients as fast as possible
   server.handleClient();
 
-  // Read the thermocouple every readIntervalMs using millis()
-  unsigned long now = millis();
-  if (now - lastReadMs >= readIntervalMs) {
-    lastReadMs = now;
-
-    temp_C = thermocouple.readCelsius();
-    temp_F = thermocouple.readFahrenheit();
-
-    Serial.print("°C = ");
-    Serial.println(temp_C);
-    Serial.print("°F = ");
-    Serial.println(temp_F);
-  }
+  // No blocking delays here; sampling happens in Web_Thermo()
 }
+  
