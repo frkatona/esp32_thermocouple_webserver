@@ -1,75 +1,79 @@
-// this example is public domain. enjoy!
-// https://learn.adafruit.com/thermocouple/
-
-/*
-____________________________________________________
- SPI pin name | ESP32 pin (SPI2) | ESP32 pin (SPI3)|
-----------------------------------------------------
-     CS      |       15         |        5       |
-     SCLK    |       14         |      18        |
-     MISO    |       12         |      19        |
-     MOSI    |       13         |      23        |
-----------------------------------------------------
-*/
-
 #include <WiFi.h>
 #include <WebServer.h>
-#include "html.h"
 #include "max6675.h"
+#include "html.h"   // contains html_page
 
-int thermoDO = 12;
-int thermoCS = 15;
-int thermoCLK = 14;
+// MAX6675 pins (SPI2 example from your comment)
+int thermoDO  = 12;   // MISO
+int thermoCS  = 15;   // CS
+int thermoCLK = 14;   // SCLK
 
 MAX6675 thermocouple(thermoCLK, thermoCS, thermoDO);
 
 WebServer server(80);
 
-const char* ssid = "APK_Thermocouple";         /*Enter Your SSID*/
-const char* password = "APK_Thermocouple"; /*Enter Your Password*/
+const char* ssid     = "APK_Thermocouple";
+const char* password = "APK_Thermocouple";
 
-long temp_C, temp_F;
+// use floating point so we don’t throw away precision
+double temp_C = 0.0;
+double temp_F = 0.0;
+
+unsigned long lastReadMs = 0;
+const unsigned long readIntervalMs = 1000;  // 1 second
 
 void MainPage() {
-  String _html_page = html_page;              /*Read The HTML Page*/
-  server.send(200, "text/html", _html_page);  /*Send the code to the web server*/
+  String _html_page = html_page;   // html_page defined in html.h
+  server.send(200, "text/html", _html_page);
 }
 
 void Web_Thermo() {
-  String data = "[\"" + String(temp_C) + "\",\"" + String(temp_F) + "\"]";
-  server.send(200, "application/json", data);  // or "text/plain"
+  // JSON array: ["<C>","<F>"]
+  String data = "[\"" + String(temp_C, 2) + "\",\"" + String(temp_F, 2) + "\"]";
+  server.send(200, "application/json", data);
 }
 
 void setup(void){
   Serial.begin(115200);
+  delay(1000);
 
-  // Start ESP32 as Wi-Fi Access Point
+  Serial.println();
+  Serial.println("Starting ESP32 Thermocouple AP...");
+
+  // Start as Access Point
   WiFi.mode(WIFI_AP);
   WiFi.softAP(ssid, password);
 
-  Serial.println();
-  Serial.print("Access Point started: ");
+  Serial.print("AP SSID: ");
   Serial.println(ssid);
-  Serial.print("AP IP address: ");
+  Serial.print("AP IP:   ");
   Serial.println(WiFi.softAPIP());
 
-  // Web server routes
-  server.on("/", MainPage);                 // HTML page
-  server.on("/readWeb_Thermo", Web_Thermo); // JSON temperature endpoint
+  // Routes
+  server.on("/", MainPage);
+  server.on("/readWeb_Thermo", Web_Thermo);
   server.begin();
   Serial.println("HTTP server started");
 
-  delay(1000);
+  // Small warm-up delay for MAX6675
+  delay(500);
 }
 
-
 void loop(void){
-  // For the MAX6675 to update, you must delay AT LEAST 250ms between reads!
-  temp_C = thermocouple.readCelsius();    /*Read Temperature on °C*/
-  temp_F = thermocouple.readFahrenheit(); /*Read Temperature on °F*/
-  Serial.print("°C = "); 
-  Serial.println(temp_C);
-  Serial.print("°F = ");
+  // Always handle HTTP clients as fast as possible
   server.handleClient();
-  delay(1000);                            /*Wait for 1000mS*/
+
+  // Read the thermocouple every readIntervalMs using millis()
+  unsigned long now = millis();
+  if (now - lastReadMs >= readIntervalMs) {
+    lastReadMs = now;
+
+    temp_C = thermocouple.readCelsius();
+    temp_F = thermocouple.readFahrenheit();
+
+    Serial.print("°C = ");
+    Serial.println(temp_C);
+    Serial.print("°F = ");
+    Serial.println(temp_F);
+  }
 }
